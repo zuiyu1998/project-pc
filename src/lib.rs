@@ -6,6 +6,9 @@ mod loading;
 mod menu;
 mod player;
 
+#[cfg(feature = "dev")]
+mod editor;
+
 use crate::actions::ActionsPlugin;
 use crate::audio::InternalAudioPlugin;
 use crate::loading::LoadingPlugin;
@@ -13,8 +16,6 @@ use crate::menu::MenuPlugin;
 use crate::player::PlayerPlugin;
 
 use bevy::app::App;
-#[cfg(debug_assertions)]
-use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin};
 use bevy::prelude::*;
 
 // This example game uses States to separate logic
@@ -43,9 +44,16 @@ impl Plugin for GamePlugin {
             PlayerPlugin,
         ));
 
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "dev")]
         {
-            app.add_plugins((FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin::default()));
+            app.add_plugins((editor::InternalEditorPlugin,));
+        }
+
+        #[cfg(not(feature = "dev"))]
+        {
+            use bevy_egui::EguiPlugin;
+
+            app.add_plugins((EguiPlugin,));
         }
     }
 }
