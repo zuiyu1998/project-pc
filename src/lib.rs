@@ -2,12 +2,10 @@
 
 mod app_splash;
 mod audio;
+mod ui;
 
 #[cfg(feature = "dev")]
 mod editor;
-
-use crate::app_splash::SplashPlugin;
-use crate::audio::InternalAudioPlugin;
 
 use bevy::app::App;
 use bevy::prelude::*;
@@ -23,8 +21,11 @@ pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.add_state::<AppState>()
-            .add_plugins((SplashPlugin, InternalAudioPlugin));
+        app.add_state::<AppState>().add_plugins((
+            app_splash::SplashPlugin,
+            audio::InternalAudioPlugin,
+            ui::UiPlugin,
+        ));
 
         #[cfg(feature = "dev")]
         {
