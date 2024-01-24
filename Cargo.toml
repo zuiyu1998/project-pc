@@ -68,12 +68,17 @@ bevy_asset_loader = { version = "0.19" }
 rand = { version = "0.8.3" }
 webbrowser = { version = "0.8", features = ["hardened"] }
 
+futures-lite = "2.0.1"
+
 bevy_editor_pls = { version = "0.7", optional = true }
 bevy_egui = { version = "0.24", optional = true }
 
 # keep the following in sync with Bevy's dependencies
 winit = { version = "0.28.7", default-features = false }
 image = { version = "0.24", default-features = false }
+
+fast-surface-nets = "0.2.0"
+noise = { version = "0.8" }
 
 [build-dependencies]
 embed-resource = "1.4"

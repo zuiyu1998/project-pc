@@ -5,10 +5,6 @@ use bevy_kira_audio::AudioSource;
 
 pub struct SplashPlugin;
 
-pub fn setup(mut commands: Commands) {
-    commands.spawn(Camera2dBundle::default());
-}
-
 impl Plugin for SplashPlugin {
     fn build(&self, app: &mut App) {
         app.add_loading_state(
@@ -16,8 +12,7 @@ impl Plugin for SplashPlugin {
                 .continue_to_state(AppState::MainMenu)
                 .load_collection::<AudioAssets>()
                 .load_collection::<TextureAssets>(),
-        )
-        .add_systems(Startup, setup);
+        );
     }
 }
 

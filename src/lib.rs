@@ -3,6 +3,7 @@
 mod app_splash;
 mod audio;
 mod ui;
+mod voxel;
 
 #[cfg(feature = "dev")]
 mod editor;
@@ -25,6 +26,7 @@ impl Plugin for GamePlugin {
             app_splash::SplashPlugin,
             audio::InternalAudioPlugin,
             ui::UiPlugin,
+            voxel::VoxelPlugin,
         ));
 
         #[cfg(feature = "dev")]
