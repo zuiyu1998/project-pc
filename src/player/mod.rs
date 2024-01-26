@@ -45,6 +45,7 @@ fn setup_player(
         },
         CharacterControllerBundle::new(Collider::capsule(1.0, 0.4), Vector::NEG_Y * 9.81 * 2.0)
             .with_movement(30.0, 0.92, 7.0, (30.0 as Scalar).to_radians()),
+        Name::new("Player"),
     ));
 }
 
