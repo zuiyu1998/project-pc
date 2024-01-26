@@ -80,5 +80,7 @@ image = { version = "0.24", default-features = false }
 fast-surface-nets = "0.2.0"
 noise = { version = "0.8" }
 
+bevy_xpbd_3d = "0.3"
+
 [build-dependencies]
 embed-resource = "1.4"

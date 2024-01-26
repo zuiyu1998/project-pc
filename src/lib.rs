@@ -2,6 +2,7 @@
 
 mod app_splash;
 mod audio;
+mod player;
 mod ui;
 mod voxel;
 
@@ -10,6 +11,7 @@ mod editor;
 
 use bevy::app::App;
 use bevy::prelude::*;
+use bevy_xpbd_3d::prelude::*;
 
 #[derive(States, Default, Clone, Eq, PartialEq, Debug, Hash)]
 pub enum AppState {
@@ -23,10 +25,12 @@ pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_state::<AppState>().add_plugins((
+            PhysicsPlugins::default(),
             app_splash::SplashPlugin,
             audio::InternalAudioPlugin,
             ui::UiPlugin,
             voxel::VoxelPlugin,
+            player::CharacterControllerPlugin,
         ));
 
         #[cfg(feature = "dev")]
