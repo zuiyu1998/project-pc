@@ -254,7 +254,7 @@ fn spawn_chunks(
         commands
             .entity(entity)
             .insert(SpawnChunkTasks(task))
-            .insert(position)
+            .insert((VisibilityBundle::default(), position))
             .set_parent(chunks);
     }
 }
@@ -280,7 +280,7 @@ fn setup_voxel(mut commands: Commands) {
         .spawn_empty()
         .insert(Name::new("Chunks"))
         .insert(Chunks)
-        .insert(TransformBundle::default());
+        .insert((TransformBundle::default(), VisibilityBundle::default()));
 }
 
 pub struct VoxelPlugin;

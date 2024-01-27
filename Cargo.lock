@@ -732,9 +732,11 @@ dependencies = [
  "embed-resource",
  "futures-lite 2.1.0",
  "image",
+ "memory-stats",
  "ndshape",
  "noise",
  "rand 0.8.5",
+ "sysinfo",
  "tokio",
  "webbrowser",
  "winit",
@@ -2776,6 +2778,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "memory-stats"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34f79cf9964c5c9545493acda1263f1912f8d2c56c8a2ffee2606cb960acaacc"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "metal"
 version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4053,6 +4065,7 @@ dependencies = [
  "libc",
  "ntapi",
  "once_cell",
+ "rayon",
  "winapi",
 ]
 

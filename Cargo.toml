@@ -69,8 +69,11 @@ rand = { version = "0.8.3" }
 webbrowser = { version = "0.8", features = ["hardened"] }
 
 bevy_atmosphere = { version = "0.8" }
+
 tokio = { version = "1.35", features = ["sync"] }
 
+sysinfo = "0.29"
+memory-stats = "1.1.0"
 futures-lite = "2.0.1"
 
 bevy_editor_pls = { version = "0.7", optional = true }
