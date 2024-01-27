@@ -181,21 +181,6 @@ fn setup_voxel(mut commands: Commands) {
         .insert(Name::new("Chunks"))
         .insert(Chunks)
         .insert(TransformBundle::default());
-
-    commands.spawn(PointLightBundle {
-        transform: Transform::from_translation(Vec3::new(25.0, 25.0, 25.0)),
-        point_light: PointLight {
-            range: 200.0,
-            intensity: 8000.0,
-            ..Default::default()
-        },
-        ..Default::default()
-    });
-    commands.spawn(Camera3dBundle {
-        transform: Transform::from_translation(Vec3::new(50.0, 15.0, 50.0))
-            .looking_at(Vec3::new(0.0, 0.0, 0.0), Vec3::Y),
-        ..Default::default()
-    });
 }
 
 pub struct VoxelPlugin;

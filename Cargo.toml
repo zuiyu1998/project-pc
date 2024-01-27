@@ -68,6 +68,8 @@ bevy_asset_loader = { version = "0.19" }
 rand = { version = "0.8.3" }
 webbrowser = { version = "0.8", features = ["hardened"] }
 
+bevy_atmosphere = { version = "0.8" }
+
 futures-lite = "2.0.1"
 
 bevy_editor_pls = { version = "0.7", optional = true }
