@@ -1,3 +1,5 @@
+mod surface_nets_helper;
+
 use std::ops::Div;
 
 use bevy::{
@@ -12,169 +14,195 @@ use bevy::{
 
 use futures_lite::future;
 
-use fast_surface_nets::ndshape::{ConstShape, ConstShape3u32};
-use fast_surface_nets::{surface_nets, SurfaceNetsBuffer};
+use ndshape::{ConstShape, ConstShape3u32};
 use noise::{Fbm, NoiseFn, Perlin};
 
-pub type ChunkShape = ConstShape3u32<16, 16, 16>;
+use crate::voxel::surface_nets_helper::{SurfaceNetsBuffer, SurfaceNetsHelper};
 
 pub type MeshShape = ConstShape3u32<16, 16, 16>;
 
-#[derive(Resource)]
-pub struct LoadedChunks(pub Option<Vec<u32>>);
+/*
+理想状态:
+1.获取一个高度图
+2.从高度图中获取sdf
+3.从sdf中获取mesh
+工程实现:
+1.获取一个高度图
+2.将sdf以区块划分
+3.生成mesh的时候，依赖当前区块和邻近区块生成mesh.如果区块的mesh未存在，则标记区块，同时标记需要重新生成的mesh
+*/
 
-#[derive(Component)]
-struct SpawnChunkTask(Task<CommandQueue>);
+#[derive(Debug, Reflect, Default, Clone, Copy)]
+pub struct SdfValue {
+    pub value: f32,
+}
+
+impl SdfValue {
+    pub fn is_empty(&self) -> bool {
+        self.value <= 0.
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq, Reflect, Deref, DerefMut, Component, Clone)]
+pub struct ChunkPosition(IVec3);
+
+impl ChunkPosition {
+    pub fn get_relative_position(&self, mesh_position: IVec3) -> IVec3 {
+        mesh_position
+            + IVec3::new(
+                self.x * MeshShape::ARRAY[0] as i32,
+                self.y * MeshShape::ARRAY[1] as i32,
+                self.z * MeshShape::ARRAY[2] as i32,
+            )
+    }
+}
+
+#[derive(Debug, Reflect, Deref, DerefMut)]
+pub struct SdfBuffer([SdfValue; MeshShape::USIZE]);
+
+impl Default for SdfBuffer {
+    fn default() -> Self {
+        SdfBuffer([SdfValue::default(); MeshShape::USIZE])
+    }
+}
+
+#[derive(Debug, Reflect)]
+pub struct PerlinNoise {
+    seed: u32,
+}
+
+impl Default for PerlinNoise {
+    fn default() -> Self {
+        PerlinNoise { seed: 100 }
+    }
+}
+
+#[derive(Reflect, Resource, Default)]
+pub struct Map {
+    noise: PerlinNoise,
+}
+
+impl Map {
+    pub fn get_sdf_value(seed: u32, position: IVec3) -> SdfValue {
+        let mut fbm = Fbm::<Perlin>::new(seed);
+
+        fbm.octaves = 4;
+
+        let f_terr = fbm.get(position.xz().as_dvec2().div(129.).to_array()) as f32;
+        let f_3d = fbm.get(position.as_dvec3().div(70.).to_array()) as f32;
+
+        let val = f_terr - (position.y as f32) / 12. + f_3d * 2.5;
+
+        SdfValue { value: val }
+    }
+}
 
 #[derive(Component)]
 pub struct Chunks;
 
+#[derive(Resource)]
+pub struct SpawnChunks(Vec<ChunkPosition>);
+
 #[derive(Component)]
-pub struct Chunk {
-    buffer: SurfaceNetsBuffer,
-    sdf: [f32; ChunkShape::USIZE],
-    position: u32,
-}
+pub struct SpawnChunkTasks(Task<CommandQueue>);
 
-impl Chunk {
-    pub fn new(position: u32) -> Chunk {
-        let seed = 100;
-        let mut fbm = Fbm::<Perlin>::new(seed);
-        fbm.octaves = 4;
-
-        let mut sdf = [1.0; MeshShape::USIZE];
-        for i in 0u32..MeshShape::SIZE {
-            let [x, y, z] = MeshShape::delinearize(i);
-            let [px, py, pz] = ChunkShape::delinearize(position);
-
-            let position = Vec3::new((x + px) as f32, (py + y) as f32, (pz + z) as f32);
-
-            let f_terr = fbm.get(position.xz().as_dvec2().div(129.).to_array()) as f32;
-            let f_3d = fbm.get(position.as_dvec3().div(70.).to_array()) as f32;
-
-            let val = f_terr - (position.y as f32) / 12. + f_3d * 2.5;
-
-            sdf[i as usize] = val;
-        }
-
-        let mut buffer = SurfaceNetsBuffer::default();
-        surface_nets(&sdf, &MeshShape {}, [0; 3], [15; 3], &mut buffer);
-
-        Chunk {
-            buffer,
-            sdf,
-            position,
-        }
+fn spawn_chunks(mut commands: Commands, spawn_chunks: Option<Res<SpawnChunks>>) {
+    if spawn_chunks.is_none() {
+        return;
     }
+    let spawn_chunks = spawn_chunks.unwrap();
 
-    pub fn to_mesh(&self) -> Mesh {
-        let num_vertices = self.buffer.positions.len();
-
-        let mut render_mesh = Mesh::new(PrimitiveTopology::TriangleList);
-        render_mesh.insert_attribute(
-            Mesh::ATTRIBUTE_POSITION,
-            VertexAttributeValues::Float32x3(self.buffer.positions.clone()),
-        );
-        render_mesh.insert_attribute(
-            Mesh::ATTRIBUTE_NORMAL,
-            VertexAttributeValues::Float32x3(self.buffer.normals.clone()),
-        );
-        render_mesh.insert_attribute(
-            Mesh::ATTRIBUTE_UV_0,
-            VertexAttributeValues::Float32x2(vec![[0.0; 2]; num_vertices]),
-        );
-        render_mesh.set_indices(Some(Indices::U32(self.buffer.indices.clone())));
-
-        render_mesh
-    }
-}
-
-fn spawn_chunks(
-    mut commands: Commands,
-    mut loaded_chunks: ResMut<LoadedChunks>,
-    chunks: Query<Entity, With<Chunks>>,
-) {
-    let chunks_entity = chunks.single();
     let thread_pool = AsyncComputeTaskPool::get();
-    if let Some(postions) = loaded_chunks.0.take() {
-        for position in postions.into_iter() {
-            let entity = commands.spawn_empty().id();
-            let task = thread_pool.spawn(async move {
-                let mut command_queue = CommandQueue::default();
 
-                // we use a raw command queue to pass a FnOne(&mut World) back to be
-                // applied in a deferred manner.
-                command_queue.push(move |world: &mut World| {
-                    let chunk = Chunk::new(position);
+    for chunk in spawn_chunks.0.iter() {
+        let position = (*chunk).clone();
+        let chunk = (*chunk).clone();
+        let entity = commands.spawn_empty().id();
 
-                    let [px, py, pz] = ChunkShape::delinearize(position);
+        let task = thread_pool.spawn(async move {
+            let transform = Transform::from_xyz(
+                chunk.x as f32 * MeshShape::ARRAY[0] as f32,
+                chunk.y as f32 * MeshShape::ARRAY[1] as f32,
+                chunk.z as f32 * MeshShape::ARRAY[2] as f32,
+            );
 
-                    let position_normal =
-                        Vec3::new(px as f32 - 8.0, py as f32 - 8.0, pz as f32 - 8.0);
+            let mut command_queue = CommandQueue::default();
 
-                    let transform = Transform {
-                        translation: position_normal * 16.0,
-                        ..Default::default()
-                    };
+            command_queue.push(move |world: &mut World| {
+                let (mesh,) = {
+                    let mut system_state =
+                        SystemState::<(ResMut<Map>, ResMut<Assets<Mesh>>)>::new(world);
+                    let (map, mut meshs) = system_state.get_mut(world);
 
-                    let (mesh, material) = {
-                        let mut system_state = SystemState::<(
-                            ResMut<Assets<Mesh>>,
-                            ResMut<Assets<StandardMaterial>>,
-                        )>::new(world);
-                        let (mut mesh_assets, mut material_assets) = system_state.get_mut(world);
+                    let mut helper = SurfaceNetsHelper::new(&map, &chunk);
 
-                        let mesh = chunk.to_mesh();
-                        let mesh = mesh_assets.add(mesh);
+                    let mut buffer = SurfaceNetsBuffer::default();
 
-                        let mut material = StandardMaterial::from(Color::rgb(1.0, 1.0, 0.0));
-                        material.perceptual_roughness = 0.9;
+                    buffer.reset();
 
-                        let material = material_assets.add(material);
+                    helper.surface_nets(&mut buffer);
+                    let num_vertices = buffer.positions.len();
 
-                        (mesh, material)
-                    };
+                    let mut render_mesh = Mesh::new(PrimitiveTopology::TriangleList);
+                    render_mesh.insert_attribute(
+                        Mesh::ATTRIBUTE_POSITION,
+                        VertexAttributeValues::Float32x3(buffer.positions.clone()),
+                    );
+                    render_mesh.insert_attribute(
+                        Mesh::ATTRIBUTE_NORMAL,
+                        VertexAttributeValues::Float32x3(buffer.normals.clone()),
+                    );
+                    render_mesh.insert_attribute(
+                        Mesh::ATTRIBUTE_UV_0,
+                        VertexAttributeValues::Float32x2(vec![[0.0; 2]; num_vertices]),
+                    );
+                    render_mesh.set_indices(Some(Indices::U32(buffer.indices.clone())));
 
-                    world
-                        .entity_mut(entity)
-                        .insert(PbrBundle {
-                            mesh,
-                            material,
-                            transform,
-                            ..Default::default()
-                        })
-                        .insert(chunk)
-                        .remove::<SpawnChunkTask>();
-                });
+                    let mesh = meshs.add(render_mesh);
 
-                command_queue
+                    (mesh,)
+                };
+
+                world
+                    .entity_mut(entity)
+                    // Add our new PbrBundle of components to our tagged entity
+                    .insert(PbrBundle {
+                        mesh,
+                        // material: box_material_handle,
+                        transform,
+                        ..default()
+                    })
+                    // Task is complete, so remove task component from entity
+                    .remove::<SpawnChunkTasks>();
             });
 
-            // Spawn new entity and add our new task as a component
-            commands
-                .entity(entity)
-                .insert(SpawnChunkTask(task))
-                .set_parent(chunks_entity);
-        }
+            command_queue
+        });
+
+        commands
+            .entity(entity)
+            .insert(SpawnChunkTasks(task))
+            .insert(position);
     }
+
+    commands.remove_resource::<SpawnChunks>();
 }
 
-fn handle_spawn_chunk_tasks(world: &mut World) {
-    let mut transform_tasks = world.query::<&mut SpawnChunkTask>();
+fn handle_spawn_tasks(world: &mut World) {
+    let mut transform_tasks = world.query::<&mut SpawnChunkTasks>();
 
-    let mut commands_queues = vec![];
+    let mut commands_queue_optional: Option<CommandQueue> = None;
 
     for mut task in transform_tasks.iter_mut(world) {
         if let Some(commands_queue) = block_on(future::poll_once(&mut task.0)) {
-            commands_queues.push(commands_queue);
+            commands_queue_optional = Some(commands_queue);
         }
     }
 
-    for mut commands_queue in commands_queues.into_iter() {
+    if let Some(mut commands_queue) = commands_queue_optional {
         commands_queue.apply(world);
     }
 }
-
 fn setup_voxel(mut commands: Commands) {
     commands
         .spawn_empty()
@@ -187,8 +215,8 @@ pub struct VoxelPlugin;
 
 impl Plugin for VoxelPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(LoadedChunks(Some(vec![0, 20, 15, 30])));
-        app.add_systems(Update, (spawn_chunks, handle_spawn_chunk_tasks));
-        app.add_systems(Startup, (setup_voxel,));
+        app.add_systems(Startup, (setup_voxel,))
+            .add_systems(Update, (spawn_chunks, handle_spawn_tasks))
+            .insert_resource(Map::default());
     }
 }

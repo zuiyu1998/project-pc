@@ -79,8 +79,8 @@ bevy_egui = { version = "0.24", optional = true }
 winit = { version = "0.28.7", default-features = false }
 image = { version = "0.24", default-features = false }
 
-fast-surface-nets = "0.2.0"
 noise = { version = "0.8" }
+ndshape = { version = "0.3" }
 
 bevy_xpbd_3d = "0.3"
 

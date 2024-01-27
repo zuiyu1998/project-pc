@@ -730,9 +730,9 @@ dependencies = [
  "bevy_kira_audio",
  "bevy_xpbd_3d",
  "embed-resource",
- "fast-surface-nets",
  "futures-lite 2.1.0",
  "image",
+ "ndshape",
  "noise",
  "rand 0.8.5",
  "webbrowser",
@@ -921,7 +921,7 @@ version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58ddc2b76783939c530178f88e5711a1b01044d7b02db4033e2eb8b43b6cf4ec"
 dependencies = [
- "glam 0.24.2",
+ "glam",
  "serde",
 ]
 
@@ -931,7 +931,7 @@ version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ec4962977a746d870170532fc92759e04d3dbcae8b7b82e7ca3bb83b1d75277"
 dependencies = [
- "glam 0.24.2",
+ "glam",
 ]
 
 [[package]]
@@ -993,7 +993,7 @@ dependencies = [
  "bevy_utils",
  "downcast-rs",
  "erased-serde",
- "glam 0.24.2",
+ "glam",
  "serde",
  "smallvec",
  "smol_str",
@@ -1292,7 +1292,7 @@ dependencies = [
  "bevy_xpbd_derive",
  "derive_more",
  "fxhash",
- "glam 0.24.2",
+ "glam",
  "indexmap 2.1.0",
  "itertools",
  "nalgebra",
@@ -1828,7 +1828,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2880830f1b9a0ea618472c989e7ee758f9abc54352846e4feab1be278e69316b"
 dependencies = [
  "egui",
- "glam 0.24.2",
+ "glam",
  "mint",
 ]
 
@@ -1879,7 +1879,7 @@ checksum = "8fce2eeef77fd4a293a54b62aa00ac9daebfbcda4bf8998c5a815635b004aa1c"
 dependencies = [
  "const_panic",
  "encase_derive",
- "glam 0.24.2",
+ "glam",
  "thiserror",
 ]
 
@@ -1986,16 +1986,6 @@ checksum = "958e4d70b6d5e81971bebec42271ec641e7ff4e170a6fa605f2b8a8b65cb97d3"
 dependencies = [
  "event-listener 4.0.0",
  "pin-project-lite",
-]
-
-[[package]]
-name = "fast-surface-nets"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d332c6935fee77eb269b29eb27c92dbfe4b4043592c399fb3f6a4e5a1aa03ad3"
-dependencies = [
- "glam 0.20.5",
- "ndshape",
 ]
 
 [[package]]
@@ -2220,12 +2210,6 @@ checksum = "4271d37baee1b8c7e4b708028c57d816cf9d2434acb33a549475f78c181f6253"
 
 [[package]]
 name = "glam"
-version = "0.20.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f43e957e744be03f5801a55472f593d43fabdebf25a4585db250f04d86b1675f"
-
-[[package]]
-name = "glam"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5418c17512bdf42730f9032c74e1ae39afc408745ebb2acf72fbc4691c17945"
@@ -2414,7 +2398,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cb3df16a7bcb1b5bc092abd55e14f77ca70aea14445026e264586fc62889a10"
 dependencies = [
  "constgebra",
- "glam 0.24.2",
+ "glam",
 ]
 
 [[package]]
@@ -2633,7 +2617,7 @@ checksum = "d15d6971aeabe05687ca909c6cf71b857e338b204c1ba9fe664e84020c633249"
 dependencies = [
  "atomic-arena",
  "cpal",
- "glam 0.24.2",
+ "glam",
  "mint",
  "ringbuf",
  "symphonia",
@@ -2896,7 +2880,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "307ed9b18cc2423f29e83f84fd23a8e73628727990181f18641a8b5dc2ab1caa"
 dependencies = [
  "approx",
- "glam 0.24.2",
+ "glam",
  "matrixmultiply",
  "nalgebra-macros",
  "num-complex",
