@@ -37,6 +37,7 @@ impl Plugin for GamePlugin {
                 player::CharacterControllerPlugin,
                 AtmospherePlugin,
             ))
+            .add_systems(PostUpdate, gizmo_sys.after(PhysicsSet::Sync))
             .add_systems(Startup, setup_environment);
 
         #[cfg(feature = "dev")]
@@ -80,4 +81,30 @@ pub fn setup_environment(mut commands: Commands) {
         },
         Name::new("Sun"),
     ));
+}
+
+fn gizmo_sys(mut gizmo: Gizmos, mut gizmo_config: ResMut<GizmoConfig>) {
+    gizmo_config.depth_bias = -1.; // always in front
+
+    // World Basis Axes
+    let n = 5;
+    gizmo.line(Vec3::ZERO, Vec3::X * 2. * n as f32, Color::RED);
+    gizmo.line(Vec3::ZERO, Vec3::Y * 2. * n as f32, Color::GREEN);
+    gizmo.line(Vec3::ZERO, Vec3::Z * 2. * n as f32, Color::BLUE);
+
+    let color = Color::GRAY;
+    for x in -n..=n {
+        gizmo.ray(
+            Vec3::new(x as f32, 0., -n as f32),
+            Vec3::Z * n as f32 * 2.,
+            color,
+        );
+    }
+    for z in -n..=n {
+        gizmo.ray(
+            Vec3::new(-n as f32, 0., z as f32),
+            Vec3::X * n as f32 * 2.,
+            color,
+        );
+    }
 }
