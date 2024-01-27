@@ -15,6 +15,7 @@ use bevy::app::App;
 use bevy::prelude::*;
 use bevy_atmosphere::prelude::*;
 use bevy_xpbd_3d::prelude::*;
+use player::*;
 
 #[derive(States, Default, Clone, Eq, PartialEq, Debug, Hash)]
 pub enum AppState {
@@ -54,7 +55,11 @@ impl Plugin for GamePlugin {
     }
 }
 
-pub fn setup_environment(mut commands: Commands) {
+pub fn setup_environment(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
     commands.spawn((
         Camera3dBundle {
             projection: Projection::Perspective(PerspectiveProjection {
@@ -67,6 +72,7 @@ pub fn setup_environment(mut commands: Commands) {
             },
             ..default()
         },
+        player::CharacterControllerCamera,
         AtmosphereCamera::default(),
         Name::new("Camera"),
     ));
@@ -80,6 +86,28 @@ pub fn setup_environment(mut commands: Commands) {
             ..default()
         },
         Name::new("Sun"),
+    ));
+
+    // Logical Player
+    commands.spawn((
+        PbrBundle {
+            mesh: meshes.add(Mesh::from(shape::Capsule {
+                radius: 0.4,
+                depth: 1.0,
+                ..default()
+            })),
+            material: materials.add(Color::rgb(0.8, 0.7, 0.6).into()),
+            transform: Transform::from_xyz(0.0, 1.5, 0.0),
+            ..default()
+        },
+        CharacterControllerBundle::new(
+            Collider::capsule(1., 0.4),
+            CharacterController {
+                is_flying: true,
+                ..default()
+            },
+        ),
+        Name::new("Player"),
     ));
 }
 

@@ -203,6 +203,7 @@ fn handle_spawn_tasks(world: &mut World) {
         commands_queue.apply(world);
     }
 }
+
 fn setup_voxel(mut commands: Commands) {
     commands
         .spawn_empty()

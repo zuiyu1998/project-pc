@@ -1,383 +1,324 @@
-use bevy::{ecs::query::Has, prelude::*};
-use bevy_xpbd_3d::{math::*, prelude::*, SubstepSchedule, SubstepSet};
+use std::f32::consts::{FRAC_PI_2, PI};
+
+use bevy::{input::mouse::MouseMotion, prelude::*};
+use bevy_xpbd_3d::{
+    components::*,
+    parry::na::ComplexField,
+    plugins::spatial_query::{ShapeCaster, ShapeHits},
+    PhysicsSet,
+};
 
 pub struct CharacterControllerPlugin;
 
 impl Plugin for CharacterControllerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_event::<MovementAction>()
-            .add_systems(
-                Update,
-                (
-                    keyboard_input,
-                    gamepad_input,
-                    update_grounded,
-                    apply_deferred,
-                    apply_gravity,
-                    movement,
-                    apply_movement_damping,
-                )
-                    .chain(),
-            )
-            .add_systems(
-                // Run collision handling in substep schedule
-                SubstepSchedule,
-                kinematic_controller_collisions.in_set(SubstepSet::SolveUserConstraints),
-            )
-            .add_systems(Startup, setup_player);
+        app.register_type::<CharacterController>();
+
+        app.add_systems(Update, input_move);
+
+        app.add_systems(PostUpdate, sync_camera.in_set(PhysicsSet::Sync));
     }
 }
 
-fn setup_player(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    commands.spawn((
-        PbrBundle {
-            mesh: meshes.add(Mesh::from(shape::Capsule {
-                radius: 0.4,
-                ..default()
-            })),
-            material: materials.add(Color::rgb(0.8, 0.7, 0.6).into()),
-            transform: Transform::from_xyz(0.0, 1.5, 0.0),
-            ..default()
-        },
-        CharacterControllerBundle::new(Collider::capsule(1.0, 0.4), Vector::NEG_Y * 9.81 * 2.0)
-            .with_movement(30.0, 0.92, 7.0, (30.0 as Scalar).to_radians()),
-        Name::new("Player"),
-    ));
-}
-
-/// An event sent for a movement input action.
-#[derive(Event)]
-pub enum MovementAction {
-    Move(Vector2),
-    Jump,
-}
-
-/// A marker component indicating that an entity is using a character controller.
-#[derive(Component)]
-pub struct CharacterController;
-
-/// A marker component indicating that an entity is on the ground.
-#[derive(Component)]
-#[component(storage = "SparseSet")]
-pub struct Grounded;
-/// The acceleration used for character movement.
-#[derive(Component)]
-pub struct MovementAcceleration(Scalar);
-
-/// The damping factor used for slowing down movement.
-#[derive(Component)]
-pub struct MovementDampingFactor(Scalar);
-
-/// The strength of a jump.
-#[derive(Component)]
-pub struct JumpImpulse(Scalar);
-
-/// The gravitational acceleration used for a character controller.
-#[derive(Component)]
-pub struct ControllerGravity(Vector);
-
-/// The maximum angle a slope can have for a character controller
-/// to be able to climb and jump. If the slope is steeper than this angle,
-/// the character will slide down.
-#[derive(Component)]
-pub struct MaxSlopeAngle(Scalar);
-
-/// A bundle that contains the components needed for a basic
-/// kinematic character controller.
 #[derive(Bundle)]
 pub struct CharacterControllerBundle {
     character_controller: CharacterController,
     rigid_body: RigidBody,
     collider: Collider,
     ground_caster: ShapeCaster,
-    gravity: ControllerGravity,
-    movement: MovementBundle,
+    sleeping_disabled: SleepingDisabled,
+    locked_axes: LockedAxes,
+    gravity_scale: GravityScale,
+    friction: Friction,
+    restitution: Restitution,
 }
-
-/// A bundle that contains components for character movement.
-#[derive(Bundle)]
-pub struct MovementBundle {
-    acceleration: MovementAcceleration,
-    damping: MovementDampingFactor,
-    jump_impulse: JumpImpulse,
-    max_slope_angle: MaxSlopeAngle,
-}
-
-impl MovementBundle {
-    pub const fn new(
-        acceleration: Scalar,
-        damping: Scalar,
-        jump_impulse: Scalar,
-        max_slope_angle: Scalar,
-    ) -> Self {
-        Self {
-            acceleration: MovementAcceleration(acceleration),
-            damping: MovementDampingFactor(damping),
-            jump_impulse: JumpImpulse(jump_impulse),
-            max_slope_angle: MaxSlopeAngle(max_slope_angle),
-        }
-    }
-}
-
-impl Default for MovementBundle {
-    fn default() -> Self {
-        Self::new(30.0, 0.9, 7.0, PI * 0.45)
-    }
-}
-
 impl CharacterControllerBundle {
-    pub fn new(collider: Collider, gravity: Vector) -> Self {
+    pub fn new(collider: Collider, character_controller: CharacterController) -> Self {
         // Create shape caster as a slightly smaller version of collider
         let mut caster_shape = collider.clone();
-        caster_shape.set_scale(Vector::ONE * 0.99, 10);
+        caster_shape.set_scale(Vec3::ONE * 0.99, 10);
 
         Self {
-            character_controller: CharacterController,
-            rigid_body: RigidBody::Kinematic,
+            character_controller,
+            rigid_body: RigidBody::Dynamic,
             collider,
-            ground_caster: ShapeCaster::new(
-                caster_shape,
-                Vector::ZERO,
-                Quaternion::default(),
-                Vector::NEG_Y,
-            )
-            .with_max_time_of_impact(0.2),
-            gravity: ControllerGravity(gravity),
-            movement: MovementBundle::default(),
-        }
-    }
-
-    pub fn with_movement(
-        mut self,
-        acceleration: Scalar,
-        damping: Scalar,
-        jump_impulse: Scalar,
-        max_slope_angle: Scalar,
-    ) -> Self {
-        self.movement = MovementBundle::new(acceleration, damping, jump_impulse, max_slope_angle);
-        self
-    }
-}
-
-/// Sends [`MovementAction`] events based on keyboard input.
-fn keyboard_input(
-    mut movement_event_writer: EventWriter<MovementAction>,
-    keyboard_input: Res<Input<KeyCode>>,
-) {
-    let up = keyboard_input.any_pressed([KeyCode::W, KeyCode::Up]);
-    let down = keyboard_input.any_pressed([KeyCode::S, KeyCode::Down]);
-    let left = keyboard_input.any_pressed([KeyCode::A, KeyCode::Left]);
-    let right = keyboard_input.any_pressed([KeyCode::D, KeyCode::Right]);
-
-    let horizontal = right as i8 - left as i8;
-    let vertical = up as i8 - down as i8;
-    let direction = Vector2::new(horizontal as Scalar, vertical as Scalar).clamp_length_max(1.0);
-
-    if direction != Vector2::ZERO {
-        movement_event_writer.send(MovementAction::Move(direction));
-    }
-
-    if keyboard_input.just_pressed(KeyCode::Space) {
-        movement_event_writer.send(MovementAction::Jump);
-    }
-}
-
-/// Sends [`MovementAction`] events based on gamepad input.
-fn gamepad_input(
-    mut movement_event_writer: EventWriter<MovementAction>,
-    gamepads: Res<Gamepads>,
-    axes: Res<Axis<GamepadAxis>>,
-    buttons: Res<Input<GamepadButton>>,
-) {
-    for gamepad in gamepads.iter() {
-        let axis_lx = GamepadAxis {
-            gamepad,
-            axis_type: GamepadAxisType::LeftStickX,
-        };
-        let axis_ly = GamepadAxis {
-            gamepad,
-            axis_type: GamepadAxisType::LeftStickY,
-        };
-
-        if let (Some(x), Some(y)) = (axes.get(axis_lx), axes.get(axis_ly)) {
-            movement_event_writer.send(MovementAction::Move(
-                Vector2::new(x as Scalar, y as Scalar).clamp_length_max(1.0),
-            ));
-        }
-
-        let jump_button = GamepadButton {
-            gamepad,
-            button_type: GamepadButtonType::South,
-        };
-
-        if buttons.just_pressed(jump_button) {
-            movement_event_writer.send(MovementAction::Jump);
+            ground_caster: ShapeCaster::new(caster_shape, Vec3::ZERO, Quat::default(), Vec3::NEG_Y)
+                .with_max_time_of_impact(0.2),
+            sleeping_disabled: SleepingDisabled,
+            locked_axes: LockedAxes::ROTATION_LOCKED,
+            gravity_scale: GravityScale(2.),
+            friction: Friction::ZERO.with_combine_rule(CoefficientCombine::Min),
+            restitution: Restitution::ZERO.with_combine_rule(CoefficientCombine::Min),
         }
     }
 }
 
-/// Updates the [`Grounded`] status for character controllers.
-fn update_grounded(
-    mut commands: Commands,
-    mut query: Query<
-        (Entity, &ShapeHits, &Rotation, Option<&MaxSlopeAngle>),
-        With<CharacterController>,
-    >,
-) {
-    for (entity, hits, rotation, max_slope_angle) in &mut query {
-        // The character is grounded if the shape caster has a hit with a normal
-        // that isn't too steep.
-        let is_grounded = hits.iter().any(|hit| {
-            if let Some(angle) = max_slope_angle {
-                rotation.rotate(-hit.normal2).angle_between(Vector::Y).abs() <= angle.0
-            } else {
-                true
-            }
-        });
+/// a tag, sync transform
+#[derive(Component)]
+pub struct CharacterControllerCamera;
 
-        if is_grounded {
-            commands.entity(entity).insert(Grounded);
-        } else {
-            commands.entity(entity).remove::<Grounded>();
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+pub struct CharacterController {
+    // State
+    pub pitch: f32,
+    pub yaw: f32,
+
+    pub is_flying: bool,
+    // sprint: bool,
+    // sneak: bool,
+    // jump: bool,
+
+    // Readonly State
+    pub is_grounded: bool,
+
+    pub is_sprinting: bool,
+    pub is_sneaking: bool,
+
+    // Control Param
+    pub jump_impulse: f32,
+    pub acceleration: f32,
+    pub max_slope_angle: f32,
+
+    // Input
+    pub enable_input: bool,
+    // fly_speed: f32,
+    // walk_speed: f32,
+
+    // Tmp KeyConfig
+    // key_forward: KeyCode,
+    // key_back: KeyCode,
+    // key_left: KeyCode,
+    // key_right: KeyCode,
+    // key_up: KeyCode,    // flymode
+    // key_down: KeyCode,  // flymode
+    // key_sprint: KeyCode,
+    // key_sneak: KeyCode,
+    // key_jump: KeyCode,
+
+    // mouse_sensitivity: f32,
+}
+
+impl Default for CharacterController {
+    fn default() -> Self {
+        Self {
+            yaw: 0.,
+            pitch: 0.,
+            is_flying: false,
+            enable_input: true,
+            is_grounded: false,
+            is_sprinting: false,
+            is_sneaking: false,
+            jump_impulse: 7.,
+            acceleration: 50.,
+            max_slope_angle: PI * 0.25,
         }
     }
 }
 
-/// Responds to [`MovementAction`] events and moves character controllers accordingly.
-fn movement(
+fn input_move(
+    key_input: Res<Input<KeyCode>>,
+    // phys_ctx: ,
     time: Res<Time>,
-    mut movement_event_reader: EventReader<MovementAction>,
-    mut controllers: Query<(
-        &MovementAcceleration,
-        &JumpImpulse,
+    mut mouse_events: EventReader<MouseMotion>,
+    mut query: Query<(
+        &mut Transform,
+        &mut CharacterController,
         &mut LinearVelocity,
-        Has<Grounded>,
+        &mut GravityScale,
+        &ShapeHits,
+        &Rotation,
     )>,
 ) {
-    // Precision is adjusted so that the example works with
-    // both the `f32` and `f64` features. Otherwise you don't need this.
-    let delta_time = time.delta_seconds_f64().adjust_precision();
+    let mut mouse_delta = Vec2::ZERO;
+    for mouse_event in mouse_events.read() {
+        mouse_delta += mouse_event.delta;
+    }
+    let dt_sec = time.delta_seconds();
 
-    for event in movement_event_reader.read() {
-        for (movement_acceleration, jump_impulse, mut linear_velocity, is_grounded) in
-            &mut controllers
-        {
-            match event {
-                MovementAction::Move(direction) => {
-                    linear_velocity.x += direction.x * movement_acceleration.0 * delta_time;
-                    linear_velocity.z -= direction.y * movement_acceleration.0 * delta_time;
-                }
-                MovementAction::Jump => {
-                    if is_grounded {
-                        linear_velocity.y = jump_impulse.0;
-                    }
-                }
+    for (mut trans, mut ctl, mut linvel, mut gravity_scale, hits, rotation) in query.iter_mut() {
+        if !ctl.enable_input {
+            continue;
+        }
+
+        // View Rotation
+        let mouse_delta = mouse_delta * 0.003; //ctl.mouse_sensitivity;
+
+        ctl.pitch = (ctl.pitch - mouse_delta.y).clamp(-FRAC_PI_2, FRAC_PI_2);
+        ctl.yaw -= mouse_delta.x;
+        if ctl.yaw.abs() > PI {
+            ctl.yaw = ctl.yaw.rem_euclid(2. * PI);
+        }
+
+        // Disp Move
+        let mut movement = Vec3::ZERO;
+        if key_input.pressed(KeyCode::A) {
+            movement.x -= 1.;
+        }
+        if key_input.pressed(KeyCode::D) {
+            movement.x += 1.;
+        }
+        if key_input.pressed(KeyCode::W) {
+            movement.z -= 1.;
+        }
+        if key_input.pressed(KeyCode::S) {
+            movement.z += 1.;
+        }
+
+        // Input Sprint
+        if key_input.pressed(KeyCode::W) {
+            if key_input.pressed(KeyCode::ControlLeft) {
+                ctl.is_sprinting = true;
+            }
+        } else {
+            ctl.is_sprinting = false;
+        }
+
+        ctl.is_sneaking = key_input.pressed(KeyCode::ShiftLeft);
+
+        if key_input.just_pressed(KeyCode::L) {
+            ctl.is_flying = !ctl.is_flying;
+        }
+
+        // Flying
+        gravity_scale.0 = if ctl.is_flying { 0. } else { 2. };
+
+        if ctl.is_flying {
+            if key_input.pressed(KeyCode::ShiftLeft) {
+                movement.y -= 1.;
+            }
+            if key_input.pressed(KeyCode::Space) {
+                movement.y += 1.;
             }
         }
+
+        // Apply Yaw
+        let movement = Mat3::from_rotation_y(ctl.yaw) * movement.normalize_or_zero();
+        trans.rotation = Quat::from_rotation_y(ctl.yaw);
+
+        // Is Grouned
+        // The character is grounded if the shape caster has a hit with a normal
+        // that isn't too steep.
+        ctl.is_grounded = hits.iter().any(|hit| {
+            // if ctl.max_slope_angle == 0. {
+            //     true
+            // } else {
+            rotation.rotate(-hit.normal2).angle_between(Vec3::Y).abs() <= ctl.max_slope_angle
+            // }
+        });
+
+        let time_now = time.elapsed_seconds();
+
+        // Jump
+        let jump = key_input.pressed(KeyCode::Space);
+
+        // Input: Fly: DoubleJump
+        if key_input.just_pressed(KeyCode::Space) {
+            static mut LAST_FLY_JUMP: f32 = 0.;
+            if time_now - unsafe { LAST_FLY_JUMP } < 0.3 {
+                ctl.is_flying = !ctl.is_flying;
+            }
+            unsafe {
+                LAST_FLY_JUMP = time_now;
+            }
+        }
+        if ctl.is_grounded && ctl.is_flying {
+            ctl.is_flying = false;
+        }
+
+        // Sprint DoubleW
+        if key_input.just_pressed(KeyCode::W) {
+            static mut LAST_W: f32 = 0.;
+            if time_now - unsafe { LAST_W } < 0.3 {
+                ctl.is_sprinting = true;
+            }
+            unsafe {
+                LAST_W = time_now;
+            }
+        }
+
+        static mut LAST_JUMP: f32 = 0.;
+        if jump && ctl.is_grounded && !ctl.is_flying && time_now - unsafe { LAST_JUMP } > 0.3 {
+            linvel.0.y = ctl.jump_impulse;
+
+            // info!("JMP {:?}", linvel.0);
+            unsafe {
+                LAST_JUMP = time_now;
+            }
+        }
+
+        // Movement
+        let mut acceleration = ctl.acceleration;
+        if ctl.is_sprinting {
+            acceleration *= 2.;
+        }
+
+        if ctl.is_flying {
+            linvel.0 += movement * acceleration * dt_sec;
+        } else {
+            if ctl.is_sneaking {
+                // !Minecraft [Sneak] * 0.3
+                acceleration *= 0.3;
+            } // else if using item: // Minecraft [UsingItem] * 0.2
+
+            if !ctl.is_grounded {
+                acceleration *= 0.2; // LessMove on air MC-Like 0.2
+            }
+
+            linvel.x += movement.x * acceleration * dt_sec;
+            linvel.z += movement.z * acceleration * dt_sec;
+        }
+
+        // Damping
+        if ctl.is_flying {
+            linvel.0 *= 0.01.powf(dt_sec);
+        } else {
+            let mut damping_factor = 0.0001.powf(dt_sec);
+            if !ctl.is_grounded {
+                damping_factor = 0.07.powf(dt_sec);
+            }
+
+            // We could use `LinearDamping`, but we don't want to dampen movement along the Y axis
+            linvel.x *= damping_factor;
+            linvel.z *= damping_factor;
+        }
+        // if ctl.flying {
+        //     linvel.0 *= damping_factor;
+        // } else if ctl.is_grounded {
+        //     linvel.x *= damping_factor;
+        //     linvel.z *= damping_factor;
+        // }
     }
 }
 
-/// Applies [`ControllerGravity`] to character controllers.
-fn apply_gravity(
+#[derive(Default)]
+struct SmoothValue {
+    pub target: f32,
+    current: f32,
+}
+
+impl SmoothValue {
+    fn tick(&mut self, dt: f32) {
+        self.current += dt * (self.target - self.current);
+    }
+}
+
+fn sync_camera(
+    mut query_cam: Query<(&mut Transform, &mut Projection), With<CharacterControllerCamera>>,
+    query_char: Query<(&Position, &CharacterController), Without<CharacterControllerCamera>>,
+    mut fov_val: Local<SmoothValue>,
     time: Res<Time>,
-    mut controllers: Query<(&ControllerGravity, &mut LinearVelocity)>,
 ) {
-    // Precision is adjusted so that the example works with
-    // both the `f32` and `f64` features. Otherwise you don't need this.
-    let delta_time = time.delta_seconds_f64().adjust_precision();
+    if let Ok((char_pos, ctl)) = query_char.get_single() {
+        if let Ok((mut cam_trans, mut proj)) = query_cam.get_single_mut() {
+            cam_trans.translation = char_pos.0 + Vec3::new(0., 0.8, 0.);
+            cam_trans.rotation = Quat::from_euler(EulerRot::YXZ, ctl.yaw, ctl.pitch, 0.0);
 
-    for (gravity, mut linear_velocity) in &mut controllers {
-        linear_velocity.0 += gravity.0 * delta_time;
-    }
-}
+            fov_val.target = if ctl.is_sprinting { 90. } else { 70. };
+            fov_val.tick(time.delta_seconds() * 16.);
 
-/// Slows down movement in the XZ plane.
-fn apply_movement_damping(mut query: Query<(&MovementDampingFactor, &mut LinearVelocity)>) {
-    for (damping_factor, mut linear_velocity) in &mut query {
-        // We could use `LinearDamping`, but we don't want to dampen movement along the Y axis
-        linear_velocity.x *= damping_factor.0;
-        linear_velocity.z *= damping_factor.0;
-    }
-}
-
-/// Kinematic bodies do not get pushed by collisions by default,
-/// so it needs to be done manually.
-///
-/// This system performs very basic collision response for kinematic
-/// character controllers by pushing them along their contact normals
-/// by the current penetration depths.
-#[allow(clippy::type_complexity)]
-fn kinematic_controller_collisions(
-    collisions: Res<Collisions>,
-    collider_parents: Query<&ColliderParent, Without<Sensor>>,
-    mut character_controllers: Query<
-        (
-            &RigidBody,
-            &mut Position,
-            &Rotation,
-            &mut LinearVelocity,
-            Option<&MaxSlopeAngle>,
-        ),
-        With<CharacterController>,
-    >,
-) {
-    // Iterate through collisions and move the kinematic body to resolve penetration
-    for contacts in collisions.iter() {
-        // If the collision didn't happen during this substep, skip the collision
-        if !contacts.during_current_substep {
-            continue;
-        }
-
-        // Get the rigid body entities of the colliders (colliders could be children)
-        let Ok([collider_parent1, collider_parent2]) =
-            collider_parents.get_many([contacts.entity1, contacts.entity2])
-        else {
-            continue;
-        };
-
-        // Get the body of the character controller and whether it is the first
-        // or second entity in the collision.
-        let is_first: bool;
-        let (rb, mut position, rotation, mut linear_velocity, max_slope_angle) =
-            if let Ok(character) = character_controllers.get_mut(collider_parent1.get()) {
-                is_first = true;
-                character
-            } else if let Ok(character) = character_controllers.get_mut(collider_parent2.get()) {
-                is_first = false;
-                character
-            } else {
-                continue;
-            };
-
-        // This system only handles collision response for kinematic character controllers
-        if !rb.is_kinematic() {
-            continue;
-        }
-
-        // Iterate through contact manifolds and their contacts.
-        // Each contact in a single manifold shares the same contact normal.
-        for manifold in contacts.manifolds.iter() {
-            let normal = if is_first {
-                -manifold.global_normal1(rotation)
-            } else {
-                -manifold.global_normal2(rotation)
-            };
-
-            // Solve each penetrating contact in the manifold
-            for contact in manifold.contacts.iter().filter(|c| c.penetration > 0.0) {
-                position.0 += normal * contact.penetration;
-            }
-
-            // If the slope isn't too steep to walk on but the character
-            // is falling, reset vertical velocity.
-            if max_slope_angle.is_some_and(|angle| normal.angle_between(Vector::Y).abs() <= angle.0)
-                && linear_velocity.y < 0.0
-            {
-                linear_velocity.y = linear_velocity.y.max(0.0);
+            if let Projection::Perspective(pp) = proj.as_mut() {
+                pp.fov = fov_val.current.to_radians();
             }
         }
     }
