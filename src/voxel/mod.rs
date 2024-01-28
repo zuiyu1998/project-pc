@@ -1,10 +1,15 @@
-//mod surface_nets_helper;
-
 mod chunk;
+mod surface_nets_helper;
 
-use bevy::prelude::*;
+use std::sync::{Arc, RwLock};
 
+use self::surface_nets_helper::{SurfaceNetsBuffer, SurfaceNetsHelper};
+use bevy::{
+    prelude::*,
+    render::mesh::{Indices, VertexAttributeValues},
+};
 pub use chunk::*;
+use ndshape::ConstShape;
 
 /*
 理想状态:
@@ -22,11 +27,63 @@ pub struct ChunkPosition(IVec3);
 
 impl ChunkPosition {}
 
-fn setup_voxel(mut commands: Commands) {
+fn setup_voxel(
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
     commands
         .spawn_empty()
         .insert(Name::new("Chunks"))
         .insert((TransformBundle::default(), VisibilityBundle::default()));
+
+    let mut chunk = Chunk::new(IVec3::new(0, 0, 0));
+
+    for i in 0u32..MeshShape::SIZE {
+        let [x, y, z] = MeshShape::delinearize(i);
+
+        let value = ((x * x + y * y + z * z) as f32).sqrt() - 15.0;
+
+        chunk.sdf[i as usize] = SdfValue::new(value);
+    }
+
+    let mut buffer = SurfaceNetsBuffer::default();
+
+    buffer.reset();
+
+    let chunk_ptr = Arc::new(RwLock::new(chunk));
+
+    let helper = SurfaceNetsHelper::new(chunk_ptr);
+
+    helper.surface_nets(&mut buffer);
+
+    let num_vertices = buffer.positions.len();
+
+    let mut render_mesh = Mesh::new(bevy::render::render_resource::PrimitiveTopology::TriangleList);
+    render_mesh.insert_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        VertexAttributeValues::Float32x3(buffer.positions.clone()),
+    );
+    render_mesh.insert_attribute(
+        Mesh::ATTRIBUTE_NORMAL,
+        VertexAttributeValues::Float32x3(buffer.normals.clone()),
+    );
+    render_mesh.insert_attribute(
+        Mesh::ATTRIBUTE_UV_0,
+        VertexAttributeValues::Float32x2(vec![[0.0; 2]; num_vertices]),
+    );
+    render_mesh.set_indices(Some(Indices::U32(buffer.indices.clone())));
+
+    let mesh = meshes.add(render_mesh);
+
+    let mut material = StandardMaterial::from(Color::rgb(0.0, 0.0, 0.0));
+    material.perceptual_roughness = 0.9;
+
+    commands.spawn(PbrBundle {
+        mesh,
+        material: materials.add(material),
+        ..Default::default()
+    });
 }
 
 pub struct VoxelPlugin;

@@ -16,6 +16,10 @@ impl SdfValue {
     pub fn is_empty(&self) -> bool {
         self.value <= 0.
     }
+
+    pub fn new(value: f32) -> SdfValue {
+        SdfValue { value }
+    }
 }
 
 pub struct Chunk {
@@ -95,11 +99,11 @@ impl Chunk {
         self.sdf[index as usize]
     }
 
-    pub fn get_sdf_value(&self, mesh_position: IVec3) -> SdfValue {
+    pub fn get_sdf_value(&self, mesh_position: IVec3) -> Option<SdfValue> {
         if Chunk::is_local_position(mesh_position) {
-            self.get_location_position_sdf_value(mesh_position)
+            Some(self.get_location_position_sdf_value(mesh_position))
         } else {
-            todo!()
+            self.get_relative_position_sdf_value(mesh_position)
         }
     }
 

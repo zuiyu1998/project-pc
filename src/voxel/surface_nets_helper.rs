@@ -1,6 +1,7 @@
 use bevy::math::{IVec3, Vec3A, Vec3Swizzles};
+use ndshape::ConstShape;
 
-use super::{ChunkPosition, SdfValue};
+use super::{Chunk, ChunkPtr, MeshShape, SdfValue};
 
 pub const NULL_VERTEX: u32 = u32::MAX;
 
@@ -27,22 +28,21 @@ impl SurfaceNetsBuffer {
 
 impl SurfaceNetsBuffer {}
 
-pub struct SurfaceNetsHelper<'a> {
-    chunk_position: &'a ChunkPosition,
+pub struct SurfaceNetsHelper {
+    chunk_ptr: ChunkPtr,
 }
 
-impl<'a> SurfaceNetsHelper<'a> {
-    pub fn new(chunk_position: &'a ChunkPosition) -> Self {
-        SurfaceNetsHelper { chunk_position }
+impl SurfaceNetsHelper {
+    pub fn new(chunk_ptr: ChunkPtr) -> Self {
+        SurfaceNetsHelper { chunk_ptr }
     }
 
-    pub fn get_real_sdf_value(&self, mesh_position: IVec3) -> SdfValue {
-        let position: IVec3 = self.chunk_position.get_relative_position(mesh_position);
-
-        MapInternal::get_sdf_value(self.map.noise.seed, position)
+    pub fn get_sdf_value(&self, mesh_position: IVec3) -> Option<SdfValue> {
+        let chunk = self.chunk_ptr.read().unwrap();
+        chunk.get_sdf_value(mesh_position)
     }
 
-    pub fn surface_nets(&mut self, output: &mut SurfaceNetsBuffer) {
+    pub fn surface_nets(&self, output: &mut SurfaceNetsBuffer) {
         self.estimate_surface(output);
 
         self.make_all_quads(output);
@@ -116,12 +116,14 @@ impl<'a> SurfaceNetsHelper<'a> {
     ) {
         let p1_p = MeshShape::delinearize(p1 as u32);
 
-        let d1 =
-            self.get_real_sdf_value(IVec3::new(p1_p[0] as i32, p1_p[1] as i32, p1_p[2] as i32));
+        let d1 = self
+            .get_sdf_value(IVec3::new(p1_p[0] as i32, p1_p[1] as i32, p1_p[2] as i32))
+            .unwrap_or_default();
         let p2_p = MeshShape::delinearize(p2 as u32);
 
-        let d2 =
-            self.get_real_sdf_value(IVec3::new(p2_p[0] as i32, p2_p[1] as i32, p2_p[2] as i32));
+        let d2 = self
+            .get_sdf_value(IVec3::new(p2_p[0] as i32, p2_p[1] as i32, p2_p[2] as i32))
+            .unwrap_or_default();
 
         let negative_face = match (d1.is_empty(), d2.is_empty()) {
             (true, false) => false,
@@ -159,9 +161,9 @@ impl<'a> SurfaceNetsHelper<'a> {
 
     pub fn estimate_surface(&self, output: &mut SurfaceNetsBuffer) {
         //遍历chunk的每个采集点
-        for z in 0..MeshShape::ARRAY[2] {
-            for y in 0..MeshShape::ARRAY[1] {
-                for x in 0..MeshShape::ARRAY[0] {
+        for z in 0..Chunk::MESH_Z {
+            for y in 0..Chunk::MESH_Y {
+                for x in 0..Chunk::MESH_Z {
                     let p = IVec3::new(x as i32, y as i32, z as i32);
                     let stride = MeshShape::linearize([x, y, z]);
 
@@ -194,7 +196,12 @@ impl<'a> SurfaceNetsHelper<'a> {
                 CUBE_CORNERS[i][2] as i32,
             );
 
-            let s = self.get_real_sdf_value(lp);
+            let s = self.get_sdf_value(lp);
+
+            if s.is_none() {
+                continue;
+            }
+            let s = s.unwrap();
 
             *dist = s.value;
             if s.is_empty() {
@@ -208,12 +215,18 @@ impl<'a> SurfaceNetsHelper<'a> {
             return false;
         }
 
-        let c = centroid_of_edge_intersections(&corner_dists);
+        let c: Vec3A = centroid_of_edge_intersections(&corner_dists);
+        let p: Vec3A = Vec3A::from([p.x as f32, p.y as f32, p.z as f32]);
 
-        let p = Vec3A::from([p.x as f32, p.y as f32, p.z as f32]);
+        let p = (p + c)
+            / Vec3A::new(
+                Chunk::MESH_X as f32,
+                Chunk::MESH_Y as f32,
+                Chunk::MESH_Z as f32,
+            );
 
         //插入一个顶点
-        output.positions.push((p + c).into());
+        output.positions.push(p.into());
         //插入发现
         output.normals.push(sdf_gradient(&corner_dists, c).into());
 
