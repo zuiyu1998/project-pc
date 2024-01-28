@@ -1,7 +1,6 @@
 use bevy::math::{IVec3, Vec3A, Vec3Swizzles};
-use ndshape::ConstShape;
 
-use super::{ChunkPosition, MapInternal, MeshShape, SdfValue};
+use super::{ChunkPosition, SdfValue};
 
 pub const NULL_VERTEX: u32 = u32::MAX;
 
@@ -29,16 +28,12 @@ impl SurfaceNetsBuffer {
 impl SurfaceNetsBuffer {}
 
 pub struct SurfaceNetsHelper<'a> {
-    map: &'a MapInternal,
     chunk_position: &'a ChunkPosition,
 }
 
 impl<'a> SurfaceNetsHelper<'a> {
-    pub fn new(map: &'a MapInternal, chunk_position: &'a ChunkPosition) -> Self {
-        SurfaceNetsHelper {
-            map,
-            chunk_position,
-        }
+    pub fn new(chunk_position: &'a ChunkPosition) -> Self {
+        SurfaceNetsHelper { chunk_position }
     }
 
     pub fn get_real_sdf_value(&self, mesh_position: IVec3) -> SdfValue {
