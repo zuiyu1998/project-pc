@@ -3,7 +3,6 @@ mod surface_nets_helper;
 use std::{ops::Div, sync::Arc};
 
 use bevy::{
-    ecs::system::{CommandQueue, SystemState},
     prelude::*,
     render::{
         mesh::{Indices, VertexAttributeValues},
@@ -13,7 +12,7 @@ use bevy::{
     utils::HashMap,
 };
 
-use tokio::sync::RwLock;
+use std::sync::RwLock;
 
 use futures_lite::future;
 
@@ -103,9 +102,9 @@ impl ViewDistance {
             return chunk_positions;
         }
 
-        let x = f32::ceil(position.x / MeshShape::ARRAY[0] as f32) as i32;
-        let y = f32::ceil(position.y / MeshShape::ARRAY[1] as f32) as i32;
-        let z = f32::ceil(position.z / MeshShape::ARRAY[2] as f32) as i32;
+        let x = f32::ceil(position.x) as i32;
+        let y = f32::ceil(position.y) as i32;
+        let z = f32::ceil(position.z) as i32;
 
         let center = IVec3::new(x, y, z);
 
@@ -144,7 +143,9 @@ impl MapInternal {
         let f_terr = fbm.get(position.xz().as_dvec2().div(129.).to_array()) as f32;
         let f_3d = fbm.get(position.as_dvec3().div(70.).to_array()) as f32;
 
-        let val = f_terr - (position.y as f32) / 12. + f_3d * 2.5;
+        let val = (position.y as f32) / 16.0 / 16.0 - f_terr;
+
+        println!("{}", val);
 
         SdfValue { value: val }
     }
@@ -154,7 +155,7 @@ impl MapInternal {
 pub struct Chunks;
 
 #[derive(Component)]
-pub struct SpawnChunkTasks(Task<CommandQueue>);
+pub struct SpawnChunkTasks(Task<Mesh>);
 
 fn spawn_chunks(
     mut commands: Commands,
@@ -188,17 +189,11 @@ fn spawn_chunks(
         let map = map.clone();
 
         let task = thread_pool.spawn(async move {
-            let transform = Transform::from_xyz(
-                chunk.x as f32 * MeshShape::ARRAY[0] as f32,
-                chunk.y as f32 * MeshShape::ARRAY[1] as f32,
-                chunk.z as f32 * MeshShape::ARRAY[2] as f32,
-            );
-
             let mut buffer = SurfaceNetsBuffer::default();
             buffer.reset();
 
             {
-                let map_guard = map.read().await;
+                let map_guard = map.read().unwrap();
                 let mut helper = SurfaceNetsHelper::new(&(*map_guard), &chunk);
 
                 helper.surface_nets(&mut buffer);
@@ -221,32 +216,9 @@ fn spawn_chunks(
             );
             render_mesh.set_indices(Some(Indices::U32(buffer.indices.clone())));
 
-            let mut command_queue = CommandQueue::default();
+            println!("rende mesh spwan: {:?}", chunk);
 
-            command_queue.push(move |world: &mut World| {
-                let (mesh,) = {
-                    let mut system_state = SystemState::<(ResMut<Assets<Mesh>>,)>::new(world);
-                    let (mut meshs,) = system_state.get_mut(world);
-
-                    let mesh = meshs.add(render_mesh);
-
-                    (mesh,)
-                };
-
-                world
-                    .entity_mut(entity)
-                    // Add our new PbrBundle of components to our tagged entity
-                    .insert(PbrBundle {
-                        mesh,
-                        // material: box_material_handle,
-                        transform,
-                        ..default()
-                    })
-                    // Task is complete, so remove task component from entity
-                    .remove::<SpawnChunkTasks>();
-            });
-
-            command_queue
+            render_mesh
         });
 
         chunk_state.insert_chunk(&position, entity);
@@ -259,19 +231,29 @@ fn spawn_chunks(
     }
 }
 
-fn handle_spawn_tasks(world: &mut World) {
-    let mut transform_tasks = world.query::<&mut SpawnChunkTasks>();
+fn handle_spawn_tasks(
+    mut commands: Commands,
+    mut tasks: Query<(Entity, &mut SpawnChunkTasks, &ChunkPosition)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for (entity, mut task, chunk_pos) in tasks.iter_mut() {
+        if let Some(mesh) = block_on(future::poll_once(&mut task.0)) {
+            println!("render Mesh");
 
-    let mut commands_queue_optional: Option<CommandQueue> = None;
-
-    for mut task in transform_tasks.iter_mut(world) {
-        if let Some(commands_queue) = block_on(future::poll_once(&mut task.0)) {
-            commands_queue_optional = Some(commands_queue);
+            commands
+                .entity(entity)
+                .insert((PbrBundle {
+                    mesh: meshes.add(mesh),
+                    material: materials.add(Color::rgb(0.8, 0.7, 0.6).into()),
+                    transform: Transform {
+                        translation: chunk_pos.as_vec3(),
+                        ..Default::default()
+                    },
+                    ..default()
+                },))
+                .remove::<SpawnChunkTasks>();
         }
-    }
-
-    if let Some(mut commands_queue) = commands_queue_optional {
-        commands_queue.apply(world);
     }
 }
 
