@@ -16,7 +16,7 @@ use bevy::prelude::*;
 */
 
 fn setup_voxel(mut commands: Commands, mut mesh_reciver: NonSendMut<MeshReceiverResource>) {
-    let (event_sender_resource, receiver_resource, handle) = start_voxel_data();
+    let (event_sender_resource, receiver_resource, handle) = start_handle_voxel_data_thread();
 
     *mesh_reciver = receiver_resource;
 
@@ -84,12 +84,10 @@ pub fn spawn_mesh(
     }
 }
 
-pub fn handle_mesh(
-    mut commands: Commands,
+pub fn receive_mesh(
     mesh_reciver: NonSend<MeshReceiverResource>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
     mut map: ResMut<Map>,
+    mut mesh_cache: ResMut<MeshCache>,
 ) {
     if let Some(mesh_reciver) = &(mesh_reciver.0) {
         match mesh_reciver.try_recv() {
@@ -103,27 +101,47 @@ pub fn handle_mesh(
                 }
 
                 let mesh = mesh.unwrap();
+                map.loading_meshs.remove(&p);
 
-                if let Some(entity) = map.loading_meshs.get(&p) {
-                    let mut material = StandardMaterial::from(Color::rgb(0.0, 0.0, 0.0));
-                    material.perceptual_roughness = 0.9;
-
-                    let mesh = meshes.add(mesh);
-
-                    commands.entity(*entity).insert(PbrBundle {
-                        mesh,
-                        material: materials.add(material),
-                        transform: Transform {
-                            translation: p.as_vec3(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    });
-
-                    map.loading_meshs.remove(&p);
-                }
+                mesh_cache.push((mesh, p));
             }
             Err(_) => {}
+        }
+    }
+}
+
+//削峰
+pub fn processing_meshs(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    map: ResMut<Map>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut mesh_cache: ResMut<MeshCache>,
+) {
+    let mut events = mesh_cache.pop();
+
+    if events.is_none() {
+        return;
+    }
+
+    let events = events.unwrap();
+
+    for (mesh, p) in events.into_iter() {
+        if let Some(entity) = map.meshs.get(&p) {
+            let mut material = StandardMaterial::from(Color::rgb(0.0, 0.0, 0.0));
+            material.perceptual_roughness = 0.9;
+
+            let mesh = meshes.add(mesh);
+
+            commands.entity(*entity).insert(PbrBundle {
+                mesh,
+                material: materials.add(material),
+                transform: Transform {
+                    translation: p.as_vec3(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
         }
     }
 }
@@ -133,10 +151,11 @@ pub struct VoxelPlugin;
 impl Plugin for VoxelPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, (setup_voxel,))
-            .add_systems(Update, (spawn_mesh, handle_mesh))
+            .add_systems(Update, (spawn_mesh, receive_mesh, processing_meshs))
             .register_type::<ChunkPosition>()
             .insert_non_send_resource(MeshReceiverResource::default())
             .init_resource::<SpawnMeshs>()
+            .init_resource::<MeshCache>()
             .insert_resource(Map {
                 max_loading_mesh: 2,
                 ..Default::default()

@@ -8,7 +8,7 @@ use fast_surface_nets::ndshape::{ConstShape, ConstShape3u32};
 use fast_surface_nets::{surface_nets, SurfaceNetsBuffer};
 
 use noise::{Fbm, NoiseFn, Perlin};
-use std::ops::Div;
+use std::{mem, ops::Div};
 use std::{
     sync::mpsc::{channel, Receiver, Sender},
     thread::JoinHandle,
@@ -47,7 +47,7 @@ pub struct MeshReceiverResource(pub Option<MeshReceiver>);
 #[derive(Resource, Deref, DerefMut)]
 pub struct VoxelDataHandle(JoinHandle<()>);
 
-pub fn start_voxel_data() -> (
+pub fn start_handle_voxel_data_thread() -> (
     VoxelEventSenderResource,
     MeshReceiverResource,
     VoxelDataHandle,
@@ -69,7 +69,67 @@ pub fn start_voxel_data() -> (
 }
 
 #[derive(Resource, Deref, DerefMut)]
+
 pub struct SpawnMeshs(Vec<ChunkPosition>);
+
+//mesh 缓存，避免短时间大量的实体生成
+#[derive(Resource)]
+pub struct MeshCache {
+    data: Vec<(Mesh, ChunkPosition)>,
+    //最大可输出事件
+    max_pop: usize,
+    is_busy: isize,
+}
+
+impl Default for MeshCache {
+    fn default() -> Self {
+        Self {
+            data: vec![],
+            max_pop: 3,
+            is_busy: 3,
+        }
+    }
+}
+
+impl MeshCache {
+    pub fn set_max_pop(&mut self, max_pop: usize) {
+        self.max_pop = max_pop;
+    }
+
+    pub fn push(&mut self, event: (Mesh, ChunkPosition)) {
+        self.tick(1);
+
+        self.data.push(event);
+    }
+
+    pub fn pop(&mut self) -> Option<Vec<(Mesh, ChunkPosition)>> {
+        self.tick(-1);
+        if !self.is_busy() {
+            let mut empty = vec![];
+            mem::swap(&mut self.data, &mut empty);
+
+            return Some(empty);
+        } else {
+            if self.data.len() > self.max_pop {
+                let mut next = self.data.split_off(self.max_pop);
+                mem::swap(&mut self.data, &mut next);
+
+                return Some(next);
+            } else {
+                return None;
+            }
+        }
+    }
+
+    pub fn tick(&mut self, work: isize) {
+        self.is_busy += work;
+        self.is_busy = self.is_busy.clamp(0, self.max_pop as isize);
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.is_busy > 0
+    }
+}
 
 impl Default for SpawnMeshs {
     fn default() -> Self {
