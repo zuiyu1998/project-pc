@@ -85,8 +85,8 @@ impl Default for MeshCache {
     fn default() -> Self {
         Self {
             data: vec![],
-            max_pop: 3,
-            is_busy: 3,
+            max_pop: 16,
+            is_busy: 16,
         }
     }
 }
@@ -94,6 +94,7 @@ impl Default for MeshCache {
 impl MeshCache {
     pub fn set_max_pop(&mut self, max_pop: usize) {
         self.max_pop = max_pop;
+        self.is_busy = max_pop as isize;
     }
 
     pub fn push(&mut self, event: (Mesh, ChunkPosition)) {
@@ -153,15 +154,49 @@ impl Default for SpawnMeshs {
 pub struct Map {
     pub loading_meshs: HashMap<ChunkPosition, Entity>,
     pub meshs: HashMap<ChunkPosition, Entity>,
-    pub max_loading_mesh: usize,
 }
 
-pub struct ChunkData {}
+pub struct ChunkData {
+    pub sdf: [f32; ChunkShape::USIZE],
+    pub position: ChunkPosition,
+}
+
+impl ChunkData {
+    pub fn new(position: ChunkPosition) -> Self {
+        let seed = 100;
+        // let perlin = Perlin::new(seed);
+        let mut fbm = Fbm::<Perlin>::new(seed);
+        // fbm.frequency = 0.2;
+        // fbm.lacunarity = 0.2;
+        fbm.octaves = 4;
+
+        let mut sdf = [1.0; ChunkShape::USIZE];
+        for i in 0u32..ChunkShape::SIZE {
+            let [x, y, z] = ChunkShape::delinearize(i);
+
+            let p = IVec3::new(x as i32, y as i32, z as i32) + position.0 * VoxelData::MESH as i32;
+
+            let f_terr = fbm.get(p.xz().as_dvec2().div(129.).to_array()) as f32;
+            let f_3d = fbm.get(p.as_dvec3().div(70.).to_array()) as f32;
+
+            let mut val = f_terr - (p.y as f32) / 12. + f_3d * 2.5;
+
+            if p.y < 0 && val < 0. {
+                val = 0.1;
+            }
+
+            sdf[i as usize] = val;
+        }
+
+        Self { sdf, position }
+    }
+}
 
 pub struct VoxelData {
     chunk_data: HashMap<ChunkPosition, ChunkData>,
     mesh_sender: MeshSender,
     event_reciver: VoxelEventReceiver,
+    surface_nets_buffer: SurfaceNetsBuffer,
 }
 
 impl VoxelData {
@@ -170,6 +205,7 @@ impl VoxelData {
             chunk_data: Default::default(),
             mesh_sender,
             event_reciver,
+            surface_nets_buffer: SurfaceNetsBuffer::default(),
         }
     }
 }
@@ -179,47 +215,36 @@ impl VoxelData {
 
     pub fn handle_chunk_spawn(&mut self, position: ChunkPosition, entity: Entity) {
         let start = std::time::Instant::now();
-
         info!("{:?}, {:?}", position, entity);
 
-        let seed = 100;
-        // let perlin = Perlin::new(seed);
-        let mut fbm = Fbm::<Perlin>::new(seed);
-        // fbm.frequency = 0.2;
-        // fbm.lacunarity = 0.2;
-        fbm.octaves = 4;
-
-        // This chunk will cover just a single octant of a sphere SDF (radius 15).
-        let mut sdf = [1.0; ChunkShape::USIZE];
-        for i in 0u32..ChunkShape::SIZE {
-            let [x, y, z] = ChunkShape::delinearize(i);
-
-            let p = IVec3::new(x as i32, y as i32, z as i32) + position.0 * Self::MESH as i32;
-
-            let f_terr = fbm.get(p.xz().as_dvec2().div(129.).to_array()) as f32;
-            let f_3d = fbm.get(p.as_dvec3().div(70.).to_array()) as f32;
-
-            let val = f_terr - (p.y as f32) / 12. + f_3d * 2.5;
-
-            sdf[i as usize] = val;
+        if !self.chunk_data.contains_key(&position) {
+            let chunk_data = ChunkData::new(position.to_owned());
+            self.chunk_data.insert(position.to_owned(), chunk_data);
         }
 
-        let mut buffer = SurfaceNetsBuffer::default();
-        surface_nets(&sdf, &ChunkShape {}, [0; 3], [17; 3], &mut buffer);
+        let chunk_data = self.chunk_data.get(&position).unwrap();
 
-        if buffer.positions.is_empty() {
+        surface_nets(
+            &chunk_data.sdf,
+            &ChunkShape {},
+            [0; 3],
+            [17; 3],
+            &mut self.surface_nets_buffer,
+        );
+
+        if self.surface_nets_buffer.positions.is_empty() {
             //减少组件生成
             self.mesh_sender.send((None, position)).unwrap();
             return;
         }
 
-        let num_vertices = buffer.positions.len();
+        let num_vertices = self.surface_nets_buffer.positions.len();
 
         let mut render_mesh = Mesh::new(PrimitiveTopology::TriangleList);
         render_mesh.insert_attribute(
             Mesh::ATTRIBUTE_POSITION,
             VertexAttributeValues::Float32x3(
-                buffer
+                self.surface_nets_buffer
                     .positions
                     .clone()
                     .into_iter()
@@ -235,13 +260,13 @@ impl VoxelData {
         );
         render_mesh.insert_attribute(
             Mesh::ATTRIBUTE_NORMAL,
-            VertexAttributeValues::Float32x3(buffer.normals.clone()),
+            VertexAttributeValues::Float32x3(self.surface_nets_buffer.normals.clone()),
         );
         render_mesh.insert_attribute(
             Mesh::ATTRIBUTE_UV_0,
             VertexAttributeValues::Float32x2(vec![[0.0; 2]; num_vertices]),
         );
-        render_mesh.set_indices(Some(Indices::U32(buffer.indices.clone())));
+        render_mesh.set_indices(Some(Indices::U32(self.surface_nets_buffer.indices.clone())));
 
         let end = std::time::Instant::now();
 

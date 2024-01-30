@@ -34,7 +34,7 @@ pub fn spawn_mesh(
         return;
     }
 
-    let mut spawn_meshs = spawn_meshs.unwrap();
+    let spawn_meshs = spawn_meshs.unwrap();
 
     let mut positions = vec![];
 
@@ -142,7 +142,6 @@ impl Plugin for VoxelPlugin {
             .init_resource::<SpawnMeshs>()
             .init_resource::<MeshCache>()
             .insert_resource(Map {
-                max_loading_mesh: 2,
                 ..Default::default()
             })
             .register_type::<Map>();
