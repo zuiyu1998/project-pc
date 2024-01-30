@@ -4,15 +4,20 @@ use bevy::{
     utils::HashMap,
 };
 
-use fast_surface_nets::ndshape::{ConstShape, ConstShape3u32};
+use fast_surface_nets::{
+    ndshape::{ConstShape, ConstShape3u32},
+    SignedDistance,
+};
 use fast_surface_nets::{surface_nets, SurfaceNetsBuffer};
 
 use noise::{Fbm, NoiseFn, Perlin};
-use std::{mem, ops::Div};
+use std::{cmp::Eq, mem, ops::Div};
 use std::{
     sync::mpsc::{channel, Receiver, Sender},
     thread::JoinHandle,
 };
+
+use super::{SdfValue, TerrainMaterial, VoxelMaterial};
 
 type ChunkShape = ConstShape3u32<18, 18, 18>;
 
@@ -154,10 +159,11 @@ impl Default for SpawnMeshs {
 pub struct Map {
     pub loading_meshs: HashMap<ChunkPosition, Entity>,
     pub meshs: HashMap<ChunkPosition, Entity>,
+    pub voxel_terrain_material: Handle<TerrainMaterial>,
 }
 
 pub struct ChunkData {
-    pub sdf: [f32; ChunkShape::USIZE],
+    pub sdf: [SdfValue; ChunkShape::USIZE],
     pub position: ChunkPosition,
 }
 
@@ -170,7 +176,7 @@ impl ChunkData {
         // fbm.lacunarity = 0.2;
         fbm.octaves = 4;
 
-        let mut sdf = [1.0; ChunkShape::USIZE];
+        let mut sdf = [SdfValue::default(); ChunkShape::USIZE];
         for i in 0u32..ChunkShape::SIZE {
             let [x, y, z] = ChunkShape::delinearize(i);
 
@@ -179,13 +185,55 @@ impl ChunkData {
             let f_terr = fbm.get(p.xz().as_dvec2().div(129.).to_array()) as f32;
             let f_3d = fbm.get(p.as_dvec3().div(70.).to_array()) as f32;
 
-            let mut val = f_terr - (p.y as f32) / 12. + f_3d * 2.5;
+            let mut value = f_terr - (p.y as f32) / 12. + f_3d * 2.5;
 
-            if p.y < 0 && val < 0. {
-                val = 0.1;
+            let mut material_id = VoxelMaterial::STONE;
+            if p.y < 0 && value < 0. {
+                value = 0.1;
+                material_id = VoxelMaterial::WATER;
             }
 
-            sdf[i as usize] = val;
+            sdf[i as usize] = SdfValue::new(value, material_id);
+        }
+
+        let perlin = Perlin::new(123);
+
+        for lx in 0..VoxelData::MESH as u32 {
+            for lz in 0..VoxelData::MESH as u32 {
+                let mut air_dist = 0;
+
+                for ly in (0..VoxelData::MESH as u32).rev() {
+                    //chunk 相邻数据可能会不一样？
+                    let index = ChunkShape::linearize([lx, ly, lz]);
+
+                    let p = IVec3::new(lx as i32, ly as i32, lz as i32);
+
+                    let mut c = sdf[index as usize];
+
+                    if c.is_negative() {
+                        air_dist = 0;
+                    } else {
+                        air_dist += 1;
+                    }
+
+                    if c.material_id == VoxelMaterial::STONE {
+                        let mut replace = c.material_id;
+                        if p.y < 2
+                            && air_dist <= 2
+                            && perlin.get([p.x as f64 / 32., p.z as f64 / 32.]) > 0.1
+                        {
+                            replace = VoxelMaterial::SAND;
+                        } else if air_dist <= 1 {
+                            replace = VoxelMaterial::GRASS;
+                        } else if air_dist < 3 {
+                            replace = VoxelMaterial::DIRT;
+                        }
+                        c.material_id = replace;
+                    }
+
+                    sdf[index as usize] = c;
+                }
+            }
         }
 
         Self { sdf, position }
@@ -243,20 +291,7 @@ impl VoxelData {
         let mut render_mesh = Mesh::new(PrimitiveTopology::TriangleList);
         render_mesh.insert_attribute(
             Mesh::ATTRIBUTE_POSITION,
-            VertexAttributeValues::Float32x3(
-                self.surface_nets_buffer
-                    .positions
-                    .clone()
-                    .into_iter()
-                    .map(|p| {
-                        [
-                            p[0] / Self::MESH as f32,
-                            p[1] / Self::MESH as f32,
-                            p[2] / Self::MESH as f32,
-                        ]
-                    })
-                    .collect::<Vec<[f32; 3]>>(),
-            ),
+            VertexAttributeValues::Float32x3(self.surface_nets_buffer.positions.clone()),
         );
         render_mesh.insert_attribute(
             Mesh::ATTRIBUTE_NORMAL,

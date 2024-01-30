@@ -1,8 +1,16 @@
 mod map;
+mod material;
+mod render;
+mod sdf_value;
 
 use map::*;
+use material::*;
+use render::*;
+use sdf_value::*;
 
 use bevy::prelude::*;
+use bevy_xpbd_3d::components::RigidBody;
+use std::cmp::Ord;
 
 /*
 理想状态:
@@ -15,7 +23,22 @@ use bevy::prelude::*;
 3.生成mesh的时候，依赖当前区块和邻近区块生成mesh.如果区块的mesh未存在，则标记区块，同时标记需要重新生成的mesh
 */
 
-fn setup_voxel(mut commands: Commands, mut mesh_reciver: NonSendMut<MeshReceiverResource>) {
+fn setup_voxel(
+    mut commands: Commands,
+    mut mesh_reciver: NonSendMut<MeshReceiverResource>,
+    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
+    mut map: ResMut<Map>,
+    asset_server: Res<AssetServer>,
+) {
+    let mtl = terrain_materials.add(TerrainMaterial {
+        texture_diffuse: Some(asset_server.load("cache/atlas_diff.png")),
+        texture_normal: Some(asset_server.load("cache/atlas_norm.png")),
+        texture_dram: Some(asset_server.load("cache/atlas_dram.png")),
+        ..default()
+    });
+
+    map.voxel_terrain_material = mtl;
+
     let (event_sender_resource, receiver_resource, handle) = start_handle_voxel_data_thread();
 
     *mesh_reciver = receiver_resource;
@@ -51,6 +74,12 @@ pub fn spawn_mesh(
     }
 
     info!("positions len: {}", positions.len());
+
+    positions.sort_by(|a, b| {
+        let a = a.0.length_squared();
+        let b = b.0.length_squared();
+        a.cmp(&b)
+    });
 
     for p in positions.iter() {
         let p = p.to_owned();
@@ -98,7 +127,6 @@ pub fn processing_meshs(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut map: ResMut<Map>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut mesh_cache: ResMut<MeshCache>,
 ) {
     let events = mesh_cache.pop();
@@ -111,20 +139,19 @@ pub fn processing_meshs(
 
     for (mesh, p) in events.into_iter() {
         if let Some(entity) = map.meshs.get(&p) {
-            let mut material = StandardMaterial::from(Color::rgb(0.0, 0.0, 0.0));
-            material.perceptual_roughness = 0.9;
-
             let mesh = meshes.add(mesh);
 
-            commands.entity(*entity).insert(PbrBundle {
-                mesh,
-                material: materials.add(material),
-                transform: Transform {
-                    translation: p.as_vec3(),
-                    ..Default::default()
+            info!("processing_meshs dddddd, {:?}", *entity);
+
+            commands.entity(*entity).insert((
+                MaterialMeshBundle {
+                    mesh,
+                    material: map.voxel_terrain_material.clone(),
+                    transform: Transform::from_translation(p.as_vec3() * VoxelData::MESH as f32),
+                    ..default()
                 },
-                ..Default::default()
-            });
+                // RigidBody::Static,
+            ));
 
             map.loading_meshs.remove(&p);
         }
@@ -144,6 +171,8 @@ impl Plugin for VoxelPlugin {
             .insert_resource(Map {
                 ..Default::default()
             })
-            .register_type::<Map>();
+            .register_type::<Map>()
+            .add_plugins(MaterialPlugin::<TerrainMaterial>::default())
+            .register_asset_reflect::<TerrainMaterial>();
     }
 }
