@@ -104,7 +104,7 @@ pub fn receive_mesh(
 ) {
     if let Some(mesh_reciver) = &(mesh_reciver.0) {
         match mesh_reciver.try_recv() {
-            Ok((mesh, p)) => {
+            Ok((mesh, c, p)) => {
                 if mesh.is_none() {
                     if let Some(_) = map.loading_meshs.get(&p) {
                         map.loading_meshs.remove(&p);
@@ -114,8 +114,9 @@ pub fn receive_mesh(
                 }
 
                 let mesh = mesh.unwrap();
+                let c = c.unwrap();
 
-                mesh_cache.push((mesh, p));
+                mesh_cache.push((mesh, c, p));
             }
             Err(_) => {}
         }
@@ -137,20 +138,20 @@ pub fn processing_meshs(
 
     let events = events.unwrap();
 
-    for (mesh, p) in events.into_iter() {
+    for (mesh, c, p) in events.into_iter() {
         if let Some(entity) = map.meshs.get(&p) {
             let mesh = meshes.add(mesh);
-
-            info!("processing_meshs dddddd, {:?}", *entity);
 
             commands.entity(*entity).insert((
                 MaterialMeshBundle {
                     mesh,
                     material: map.voxel_terrain_material.clone(),
                     transform: Transform::from_translation(p.as_vec3() * VoxelData::MESH as f32),
+
                     ..default()
                 },
-                // RigidBody::Static,
+                RigidBody::Static,
+                c,
             ));
 
             map.loading_meshs.remove(&p);

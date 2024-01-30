@@ -4,6 +4,7 @@ use bevy::{
     utils::HashMap,
 };
 
+use bevy_xpbd_3d::components::Collider;
 use fast_surface_nets::{
     ndshape::{ConstShape, ConstShape3u32},
     SignedDistance,
@@ -31,8 +32,8 @@ pub enum VoxelEvent {
 pub type VoxelEventSender = Sender<VoxelEvent>;
 pub type VoxelEventReceiver = Receiver<VoxelEvent>;
 
-pub type MeshSender = Sender<(Option<Mesh>, ChunkPosition)>;
-pub type MeshReceiver = Receiver<(Option<Mesh>, ChunkPosition)>;
+pub type MeshSender = Sender<(Option<Mesh>, Option<Collider>, ChunkPosition)>;
+pub type MeshReceiver = Receiver<(Option<Mesh>, Option<Collider>, ChunkPosition)>;
 
 #[derive(Debug, Hash, PartialEq, Eq, Reflect, Deref, DerefMut, Component, Clone)]
 pub struct ChunkPosition(pub IVec3);
@@ -80,7 +81,7 @@ pub struct SpawnMeshs(Vec<ChunkPosition>);
 //mesh 缓存，避免短时间大量的实体生成
 #[derive(Resource)]
 pub struct MeshCache {
-    data: Vec<(Mesh, ChunkPosition)>,
+    data: Vec<(Mesh, Collider, ChunkPosition)>,
     //最大可输出事件
     max_pop: usize,
     is_busy: isize,
@@ -102,13 +103,13 @@ impl MeshCache {
         self.is_busy = max_pop as isize;
     }
 
-    pub fn push(&mut self, event: (Mesh, ChunkPosition)) {
+    pub fn push(&mut self, event: (Mesh, Collider, ChunkPosition)) {
         self.tick(1);
 
         self.data.push(event);
     }
 
-    pub fn pop(&mut self) -> Option<Vec<(Mesh, ChunkPosition)>> {
+    pub fn pop(&mut self) -> Option<Vec<(Mesh, Collider, ChunkPosition)>> {
         self.tick(-1);
         if !self.is_busy() {
             let mut empty = vec![];
@@ -185,11 +186,11 @@ impl ChunkData {
             let f_terr = fbm.get(p.xz().as_dvec2().div(129.).to_array()) as f32;
             let f_3d = fbm.get(p.as_dvec3().div(70.).to_array()) as f32;
 
-            let mut value = f_terr - (p.y as f32) / 12. + f_3d * 2.5;
+            let mut value = (p.y as f32) / 12. - f_terr - f_3d * 2.5;
 
             let mut material_id = VoxelMaterial::STONE;
-            if p.y < 0 && value < 0. {
-                value = 0.1;
+            if p.y < 0 && value > 0. {
+                value = -0.1;
                 material_id = VoxelMaterial::WATER;
             }
 
@@ -280,13 +281,23 @@ impl VoxelData {
             &mut self.surface_nets_buffer,
         );
 
-        if self.surface_nets_buffer.positions.is_empty() {
+        if self.surface_nets_buffer.positions.is_empty()
+            || self.surface_nets_buffer.indices.is_empty()
+        {
             //减少组件生成
-            self.mesh_sender.send((None, position)).unwrap();
+            self.mesh_sender.send((None, None, position)).unwrap();
             return;
         }
 
         let num_vertices = self.surface_nets_buffer.positions.len();
+
+        let uvs = (0..num_vertices)
+            .into_iter()
+            .map(|i| {
+                let material_id = chunk_data.sdf[i].material_id;
+                [material_id as f32, 0.0]
+            })
+            .collect::<Vec<[f32; 2]>>();
 
         let mut render_mesh = Mesh::new(PrimitiveTopology::TriangleList);
         render_mesh.insert_attribute(
@@ -297,11 +308,10 @@ impl VoxelData {
             Mesh::ATTRIBUTE_NORMAL,
             VertexAttributeValues::Float32x3(self.surface_nets_buffer.normals.clone()),
         );
-        render_mesh.insert_attribute(
-            Mesh::ATTRIBUTE_UV_0,
-            VertexAttributeValues::Float32x2(vec![[0.0; 2]; num_vertices]),
-        );
+        render_mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, VertexAttributeValues::Float32x2(uvs));
         render_mesh.set_indices(Some(Indices::U32(self.surface_nets_buffer.indices.clone())));
+
+        let collider = Collider::trimesh_from_mesh(&render_mesh);
 
         let end = std::time::Instant::now();
 
@@ -310,7 +320,7 @@ impl VoxelData {
         info!("chunk spawn duration: {:?}", duration);
 
         self.mesh_sender
-            .send((Some(render_mesh), position))
+            .send((Some(render_mesh), collider, position))
             .unwrap();
     }
 
