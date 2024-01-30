@@ -50,22 +50,6 @@ pub fn spawn_mesh(
         return;
     }
 
-    let cul_max_loading = map.max_loading_mesh - map.loading_meshs.len();
-
-    if cul_max_loading == 0 {
-        return;
-    }
-
-    if positions.len() <= cul_max_loading {
-        commands.remove_resource::<SpawnMeshs>();
-    } else {
-        let (cul, next) = positions.split_at(cul_max_loading);
-
-        **spawn_meshs = next.to_owned();
-
-        positions = cul.to_owned();
-    }
-
     info!("positions len: {}", positions.len());
 
     for p in positions.iter() {
@@ -101,7 +85,6 @@ pub fn receive_mesh(
                 }
 
                 let mesh = mesh.unwrap();
-                map.loading_meshs.remove(&p);
 
                 mesh_cache.push((mesh, p));
             }
@@ -114,11 +97,11 @@ pub fn receive_mesh(
 pub fn processing_meshs(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    map: ResMut<Map>,
+    mut map: ResMut<Map>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut mesh_cache: ResMut<MeshCache>,
 ) {
-    let mut events = mesh_cache.pop();
+    let events = mesh_cache.pop();
 
     if events.is_none() {
         return;
@@ -142,6 +125,8 @@ pub fn processing_meshs(
                 },
                 ..Default::default()
             });
+
+            map.loading_meshs.remove(&p);
         }
     }
 }
