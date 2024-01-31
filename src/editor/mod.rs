@@ -116,14 +116,14 @@ fn update_debug_text(
 
     let mut frame_time = time.delta_seconds_f64();
     if let Some(frame_time_diagnostic) = diagnostics.get(FrameTimeDiagnosticsPlugin::FRAME_TIME) {
-        if let Some(frame_time_smoothed) = frame_time_diagnostic.smoothed() {
+        if let Some(frame_time_smoothed) = frame_time_diagnostic.average() {
             frame_time = frame_time_smoothed;
         }
     }
 
     let mut fps = frame_time / 1.0;
     if let Some(fps_diagnostic) = diagnostics.get(FrameTimeDiagnosticsPlugin::FPS) {
-        if let Some(fps_smoothed) = fps_diagnostic.smoothed() {
+        if let Some(fps_smoothed) = fps_diagnostic.average() {
             fps = fps_smoothed;
         }
     }

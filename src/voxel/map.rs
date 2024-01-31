@@ -141,7 +141,7 @@ impl MeshCache {
 impl Default for SpawnMeshs {
     fn default() -> Self {
         let mut positions = vec![];
-        let n = 8;
+        let n = 16;
 
         for x in -n..n {
             for y in -n..n {
@@ -294,7 +294,9 @@ impl VoxelData {
         let uvs = (0..num_vertices)
             .into_iter()
             .map(|i| {
-                let material_id = chunk_data.sdf[i].material_id;
+                let p = self.surface_nets_buffer.positions[i];
+                let p = ChunkShape::linearize([p[0] as u32, p[1] as u32, p[2] as u32]);
+                let material_id = chunk_data.sdf[p as usize].material_id;
                 [material_id as f32, 0.0]
             })
             .collect::<Vec<[f32; 2]>>();
